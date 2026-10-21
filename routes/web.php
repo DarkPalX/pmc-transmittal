@@ -20,6 +20,7 @@ Route::middleware('auth')->group(function () {
     Route::patch('/transmittals/{transmittal}/status', [TransmittalController::class, 'updateStatus'])->name('transmittals.status');
     Route::get('/transmittals/{transmittal}/print', [TransmittalController::class, 'print'])->name('transmittals.print');
     Route::get('/items', [ItemController::class, 'index'])->name('items.index');
-    Route::post('/items', [ItemController::class, 'store'])->name('items.store');
+    Route::get('/items/{item}/history', [ItemController::class, 'history'])->name('items.history');
     Route::delete('/items/{item}', [ItemController::class, 'destroy'])->name('items.destroy');
+    Route::patch('/items/{item}/restore', [ItemController::class, 'restore'])->name('items.restore');
 });

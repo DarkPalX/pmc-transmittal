@@ -8,6 +8,7 @@ use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Str;
 use Illuminate\View\View;
 
 class TransmittalController extends Controller
@@ -18,7 +19,17 @@ class TransmittalController extends Controller
         if ($request->filled('type')) $query->where('transmittal_type', $request->string('type'));
         if ($request->filled('status')) $query->where('status', $request->string('status'));
         if ($request->filled('q')) $query->where(fn ($q) => $q->where('ref_no', 'like', '%'.$request->string('q').'%')->orWhere('destination', 'like', '%'.$request->string('q').'%'));
-        return view('transmittals.index', ['transmittals' => $query->with('details')->latest('transmittal_date')->paginate(12)->withQueryString()]);
+        $sort = $request->get('sort', 'updated_desc');
+        $sorts = [
+            'updated_desc' => ['updated_at', 'desc'],
+            'updated_asc' => ['updated_at', 'asc'],
+            'date_desc' => ['transmittal_date', 'desc'],
+            'date_asc' => ['transmittal_date', 'asc'],
+            'ref_asc' => ['ref_no', 'asc'],
+        ];
+        [$sortColumn, $sortDirection] = $sorts[$sort] ?? $sorts['updated_desc'];
+
+        return view('transmittals.index', ['transmittals' => $query->with('details')->orderBy($sortColumn, $sortDirection)->paginate(12)->withQueryString()]);
     }
 
     public function create(Request $request): View
@@ -32,12 +43,16 @@ class TransmittalController extends Controller
     {
         $data = $this->validated($request);
         $data['prepared_by'] = $data['prepared_by'] ?: $request->user()->name;
-        $data['status'] = $data['status'] ?? 'Draft';
+        $data['status'] = $data['status'] ?? 'Saved';
         $data['attachment'] = $request->hasFile('attachment') ? $request->file('attachment')->store('transmittals', 'public') : null;
         $header = DB::transaction(function () use ($data, $request) {
             $header = TransmittalHeader::create($data);
-            foreach ($request->input('details', []) as $detail) {
-                if (filled($detail['item_desc'] ?? null)) $header->details()->create($detail);
+            foreach ($request->input('details', []) as $index => $detail) {
+                if (! filled($detail['item_desc'] ?? null)) continue;
+                $detail['item_qty'] = filled($detail['item_qty'] ?? null) ? $detail['item_qty'] : 1;
+                $detail['attachment'] = $request->file("details.$index.attachment")?->store('transmittal-details', 'public');
+                $savedDetail = $header->details()->create($detail);
+                if ($header->transmittal_type === 'Incoming') $this->saveIncomingItem($savedDetail, $header);
             }
             return $header;
         });
@@ -52,11 +67,15 @@ class TransmittalController extends Controller
 
     public function edit(TransmittalHeader $transmittal): View
     {
+        abort_if($transmittal->status !== 'Saved' && ! request()->user()->isSuperadmin(), 403, 'Only saved transmittals can be edited.');
         return view('transmittals.form', ['transmittal' => $transmittal->load('details'), 'items' => Item::where('is_active', true)->orderBy('description')->get()]);
     }
 
     public function update(Request $request, TransmittalHeader $transmittal): RedirectResponse
     {
+        if ($transmittal->status !== 'Saved' && ! $request->user()->isSuperadmin()) {
+            return back()->with('error', 'Only saved transmittals can be updated.');
+        }
         $data = $this->validated($request);
         if ($request->hasFile('attachment')) {
             if ($transmittal->attachment) Storage::disk('public')->delete($transmittal->attachment);
@@ -65,7 +84,13 @@ class TransmittalController extends Controller
         DB::transaction(function () use ($data, $request, $transmittal) {
             $transmittal->update($data);
             $transmittal->details()->delete();
-            foreach ($request->input('details', []) as $detail) if (filled($detail['item_desc'] ?? null)) $transmittal->details()->create($detail);
+            foreach ($request->input('details', []) as $index => $detail) {
+                if (! filled($detail['item_desc'] ?? null)) continue;
+                $detail['item_qty'] = filled($detail['item_qty'] ?? null) ? $detail['item_qty'] : 1;
+                $detail['attachment'] = $request->file("details.$index.attachment")?->store('transmittal-details', 'public');
+                $savedDetail = $transmittal->details()->create($detail);
+                if ($transmittal->transmittal_type === 'Incoming') $this->saveIncomingItem($savedDetail, $transmittal);
+            }
         });
         return redirect()->route('transmittals.show', $transmittal)->with('success', 'Transmittal updated.');
     }
@@ -83,8 +108,11 @@ class TransmittalController extends Controller
 
     public function updateStatus(Request $request, TransmittalHeader $transmittal): RedirectResponse
     {
+        if ($transmittal->status === 'Transmitted' && ! $request->user()->isSuperadmin()) {
+            return back()->with('error', 'This transmittal is already transmitted and cannot be changed.');
+        }
         $data = $request->validate([
-            'status' => ['required', 'in:Draft,For Receiving,Received,Closed'],
+            'status' => ['required', 'in:Saved,Transmitted,Received'],
         ]);
 
         $transmittal->update($data);
@@ -99,10 +127,43 @@ class TransmittalController extends Controller
             'transmittal_date' => ['required', 'date'], 'transmittal_type' => ['required', 'in:Incoming,Outgoing'],
             'destination' => ['required', 'string', 'max:255'], 'plate_no' => ['nullable', 'string', 'max:50'],
             'prepared_by' => ['nullable', 'string', 'max:255'], 'received_by' => ['nullable', 'string', 'max:255'],
-            'noted_by' => ['nullable', 'string', 'max:255'], 'status' => ['required', 'in:Draft,For Receiving,Received,Closed'],
+            'noted_by' => ['nullable', 'string', 'max:255'], 'status' => ['required', 'in:Saved,Transmitted,Received'],
             'remarks' => ['nullable', 'string'], 'attachment' => ['nullable', 'file', 'max:10240'],
-            'details' => ['array'], 'details.*.item_id' => ['nullable', 'integer'], 'details.*.item_desc' => ['required', 'string'],
-            'details.*.item_unit' => ['nullable', 'string', 'max:50'], 'details.*.item_serial_no' => ['nullable', 'string', 'max:100'], 'details.*.remarks' => ['nullable', 'string'],
+            'details' => ['array'], 'details.*.item_id' => ['nullable', 'integer', 'exists:items,id'], 'details.*.item_qty' => ['nullable', 'numeric', 'min:0.01'], 'details.*.item_desc' => ['required', 'string'],
+            'details.*.item_unit' => ['nullable', 'string', 'max:50'], 'details.*.item_serial_no' => ['nullable', 'string', 'max:100'],
+            'details.*.par_no' => ['nullable', 'string', 'max:100'], 'details.*.attachment' => ['nullable', 'file', 'max:10240'], 'details.*.remarks' => ['nullable', 'string'],
         ]);
+    }
+
+    private function saveIncomingItem($detail, TransmittalHeader $header): void
+    {
+        $item = $detail->item_id ? Item::find($detail->item_id) : null;
+        if (! $item) {
+            $itemQuery = Item::where('description', $detail->item_desc);
+            if (filled($detail->item_serial_no)) {
+                $itemQuery->where('serial_no', $detail->item_serial_no);
+            } else {
+                $itemQuery->where('unit', $detail->item_unit)->whereNull('serial_no');
+            }
+            $item = $itemQuery->first();
+        }
+
+        $values = [
+            'description' => $detail->item_desc,
+            'unit' => $detail->item_unit,
+            'serial_no' => $detail->item_serial_no,
+            'transmittal_date' => $header->transmittal_date,
+            'par_no' => $detail->par_no,
+            'attachment' => $detail->attachment,
+            'is_active' => true,
+        ];
+
+        if ($item) {
+            $item->update($values);
+            return;
+        }
+
+        $values['item_code'] = 'IN-'.Str::upper(Str::random(8));
+        Item::create($values);
     }
 }

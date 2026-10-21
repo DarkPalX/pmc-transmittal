@@ -13,7 +13,7 @@ class DashboardController extends Controller
             'total' => TransmittalHeader::count(),
             'outgoing' => TransmittalHeader::where('transmittal_type', 'Outgoing')->count(),
             'incoming' => TransmittalHeader::where('transmittal_type', 'Incoming')->count(),
-            'pending' => TransmittalHeader::whereIn('status', ['Draft', 'For Receiving'])->count(),
+            'pending' => TransmittalHeader::where('status', 'Saved')->count(),
             'recent' => TransmittalHeader::latest('transmittal_date')->latest('id')->limit(6)->get(),
         ]);
     }
