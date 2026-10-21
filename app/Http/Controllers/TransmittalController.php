@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Models\Item;
+use App\Models\AuditLog;
 use App\Models\TransmittalHeader;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -56,12 +57,13 @@ class TransmittalController extends Controller
             }
             return $header;
         });
+        $this->audit($header, 'created', 'Transmittal created.');
         return redirect()->route('transmittals.show', $header)->with('success', 'Transmittal created.');
     }
 
     public function show(TransmittalHeader $transmittal): View
     {
-        $transmittal->load('details');
+        $transmittal->load('details', 'auditLogs.user');
         return view('transmittals.show', compact('transmittal'));
     }
 
@@ -81,6 +83,7 @@ class TransmittalController extends Controller
             if ($transmittal->attachment) Storage::disk('public')->delete($transmittal->attachment);
             $data['attachment'] = $request->file('attachment')->store('transmittals', 'public');
         }
+        $before = $transmittal->only(['ref_no', 'transmittal_date', 'transmittal_type', 'destination', 'status', 'prepared_by', 'received_by', 'noted_by', 'remarks']);
         DB::transaction(function () use ($data, $request, $transmittal) {
             $transmittal->update($data);
             $transmittal->details()->delete();
@@ -92,11 +95,13 @@ class TransmittalController extends Controller
                 if ($transmittal->transmittal_type === 'Incoming') $this->saveIncomingItem($savedDetail, $transmittal);
             }
         });
+        $this->audit($transmittal, 'updated', 'Transmittal details updated.', $before, $transmittal->fresh()->only(array_keys($before)));
         return redirect()->route('transmittals.show', $transmittal)->with('success', 'Transmittal updated.');
     }
 
     public function destroy(TransmittalHeader $transmittal): RedirectResponse
     {
+        $this->audit($transmittal, 'deleted', 'Transmittal deleted.');
         $transmittal->delete();
         return redirect()->route('transmittals.index')->with('success', 'Transmittal deleted.');
     }
@@ -115,7 +120,9 @@ class TransmittalController extends Controller
             'status' => ['required', 'in:Saved,Transmitted,Received'],
         ]);
 
+        $oldStatus = $transmittal->status;
         $transmittal->update($data);
+        $this->audit($transmittal, 'status_changed', "Status changed from {$oldStatus} to {$transmittal->status}.", ['status' => $oldStatus], ['status' => $transmittal->status]);
 
         return back()->with('success', "{$transmittal->ref_no} status updated to {$transmittal->status}.");
     }
@@ -165,5 +172,19 @@ class TransmittalController extends Controller
 
         $values['item_code'] = 'IN-'.Str::upper(Str::random(8));
         Item::create($values);
+    }
+
+    private function audit(TransmittalHeader $transmittal, string $action, string $description, ?array $oldValues = null, ?array $newValues = null): void
+    {
+        AuditLog::create([
+            'user_id' => auth()->id(),
+            'action' => $action,
+            'auditable_type' => TransmittalHeader::class,
+            'auditable_id' => $transmittal->id,
+            'description' => $description,
+            'old_values' => $oldValues,
+            'new_values' => $newValues,
+            'ip_address' => request()->ip(),
+        ]);
     }
 }

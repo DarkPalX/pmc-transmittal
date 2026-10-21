@@ -23,4 +23,9 @@ class TransmittalHeader extends Model
     {
         return $this->hasMany(TransmittalDetail::class, 'outgoing_transmittal_header_id');
     }
+
+    public function auditLogs(): HasMany
+    {
+        return $this->hasMany(AuditLog::class, 'auditable_id')->where('auditable_type', self::class)->latest();
+    }
 }

@@ -20,6 +20,7 @@ it('allows an authenticated user to create an outgoing transmittal with details'
 
     $this->assertDatabaseHas('transmittal_header', ['ref_no' => 'PMC-OUT-TEST-001', 'transmittal_type' => 'Outgoing']);
     $this->assertDatabaseHas('transmittal_details', ['item_desc' => 'Inspection report']);
+    $this->assertDatabaseHas('audit_logs', ['action' => 'created', 'description' => 'Transmittal created.']);
 });
 
 it('persists editable quantities and accepts the received status', function () {
