@@ -5,6 +5,7 @@ use App\Http\Controllers\AuditLogController;
 use App\Http\Controllers\DashboardController;
 use App\Http\Controllers\ItemController;
 use App\Http\Controllers\TransmittalController;
+use App\Http\Controllers\UserManagementController;
 use Illuminate\Support\Facades\Route;
 
 Route::redirect('/', '/dashboard');
@@ -17,6 +18,7 @@ Route::post('/logout', [AuthController::class, 'destroy'])->middleware('auth')->
 Route::middleware('auth')->group(function () {
     Route::get('/dashboard', DashboardController::class)->name('dashboard');
     Route::get('/audit-trail', [AuditLogController::class, 'index'])->name('audit.index');
+    Route::resource('users', UserManagementController::class)->only(['index', 'create', 'store', 'edit', 'update', 'destroy']);
     Route::resource('transmittals', TransmittalController::class)->except(['create']);
     Route::get('/transmittals/create/new', [TransmittalController::class, 'create'])->name('transmittals.create');
     Route::patch('/transmittals/{transmittal}/status', [TransmittalController::class, 'updateStatus'])->name('transmittals.status');

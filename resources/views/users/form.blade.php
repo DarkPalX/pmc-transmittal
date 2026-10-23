@@ -1,0 +1,7 @@
+@extends('layouts.app')
+@section('title', $user->exists ? 'Edit user' : 'Add user')
+@section('content')
+<div class="page-head compact"><div><a class="back-link" href="{{ route('users.index') }}">← User management</a><span class="eyebrow">SYSTEM / USERS</span><h1>{{ $user->exists ? 'Edit user' : 'Add user' }}</h1><p class="muted">Manage account access and credentials.</p></div></div>
+<form method="POST" action="{{ $user->exists ? route('users.update', $user) : route('users.store') }}">@csrf @if($user->exists) @method('PUT') @endif
+<section class="form-card"><div class="field-grid"><label>Name *<input name="name" value="{{ old('name', $user->name) }}" required></label><label>Email address *<input type="email" name="email" value="{{ old('email', $user->email) }}" required></label><label>Role *<select name="role" required><option value="user" @selected(old('role', $user->role) === 'user')>User</option><option value="superadmin" @selected(old('role', $user->role) === 'superadmin')>Superadmin</option></select></label><label>Password {{ $user->exists ? '(leave blank to keep current)' : '*' }}<input type="password" name="password" {{ $user->exists ? '' : 'required' }} minlength="8"></label><label>Password confirmation<input type="password" name="password_confirmation" {{ $user->exists ? '' : 'required' }} minlength="8"></label></div><div class="form-actions"><a class="button ghost" href="{{ route('users.index') }}">Cancel</a><button class="button primary">{{ $user->exists ? 'Save changes' : 'Create user' }}</button></div></section></form>
+@endsection
